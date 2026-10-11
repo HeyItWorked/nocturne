@@ -1,9 +1,9 @@
 import { render } from "vitest-browser-svelte";
 import { page } from "vitest/browser";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { remoteQuery } from "$lib/test-stubs/remote-resource";
-import { engine } from "$lib/test-stubs/Watercolour.test-stub.svelte";
 import { GlucoseStatus } from "$lib/api/generated/nocturne-api-client";
+import { releaseWatercolour, resetWatercolour } from "$lib/test-stubs/watercolour-deferral.svelte";
 
 const now = Date.UTC(2026, 5, 14, 9, 30, 0);
 
@@ -36,6 +36,8 @@ vi.mock("@nocturne/watercolour", async (importOriginal) => {
   };
 });
 
+vi.mock("$lib/watercolour-deferral.svelte", () => import("$lib/test-stubs/watercolour-deferral.svelte"));
+
 const store = $state({
   currentBG: 123,
   currentEntry: { mills: 0 },
@@ -53,6 +55,7 @@ const summary = $state<{ current?: { mills: number; status: GlucoseStatus } }>({
 mocked.summary = summary;
 
 import { setGlucoseUnits } from "$lib/stores/appearance-store.svelte";
+import { illustrations } from "$lib/stores/illustrations.svelte";
 import CurrentGlucoseWidget from "./CurrentGlucoseWidget.svelte";
 
 const tile = () => page.getByTestId("current-glucose-tile");
@@ -65,6 +68,48 @@ describe("CurrentGlucoseWidget", () => {
     battery.status = undefined;
     summary.current = undefined;
     setGlucoseUnits("mg/dl");
+    releaseWatercolour();
+  });
+
+  afterEach(() => {
+    illustrations.current = "animated";
+  });
+
+  it("lays the still wash over the range fill at once under the Still preference", async () => {
+    resetWatercolour();
+    illustrations.current = "still";
+    summary.current = { mills: store.currentEntry.mills, status: GlucoseStatus.High };
+    render(CurrentGlucoseWidget);
+
+    await expect.element(page.getByTestId("artwork-wash")).toBeInTheDocument();
+  });
+
+  it("keeps the flat range fill with illustrations off", async () => {
+    illustrations.current = "off";
+    summary.current = { mills: store.currentEntry.mills, status: GlucoseStatus.High };
+    render(CurrentGlucoseWidget);
+
+    const indicator = () => tile().element().querySelector('[data-slot="glucose-value-indicator"]');
+    await vi.waitFor(() => expect(indicator()?.innerHTML).toContain("bg-glucose-high"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(page.getByTestId("artwork-wash").elements()).toHaveLength(0);
+    expect(page.getByTestId("glucose-tile-bloom").elements()).toHaveLength(0);
+  });
+
+  it("shows the flat range fill until the deferred wash arrives, then the settling wash over it", async () => {
+    resetWatercolour();
+    summary.current = { mills: store.currentEntry.mills, status: GlucoseStatus.High };
+    render(CurrentGlucoseWidget);
+
+    const indicator = () => tile().element().querySelector('[data-slot="glucose-value-indicator"]');
+    await expect.element(tile()).toHaveTextContent(/^123/);
+    await vi.waitFor(() => expect(indicator()?.innerHTML).toContain("bg-glucose-high"));
+    expect(page.getByTestId("glucose-tile-bloom").elements()).toHaveLength(0);
+
+    releaseWatercolour();
+
+    await expect.element(page.getByTestId("artwork-wash")).toBeInTheDocument();
+    expect(page.getByTestId("glucose-tile-bloom").elements()).toHaveLength(0);
   });
 
   it("shows the reading with its unit, trend, change and age", async () => {
@@ -102,8 +147,8 @@ describe("CurrentGlucoseWidget", () => {
     const first = store.currentEntry.mills;
     summary.current = { mills: first, status: GlucoseStatus.High };
     render(CurrentGlucoseWidget);
-    await expect.element(page.getByTestId("glucose-tile-bloom")).toBeInTheDocument();
-    for (const painting of engine.live()) painting.paint(0.7);
+    await expect.element(page.getByTestId("artwork-wash")).toBeInTheDocument();
+    const firstWash = page.getByTestId("artwork-wash").element();
 
     const second = first + 5 * 60_000;
     store.currentEntry = { mills: second };
@@ -112,7 +157,7 @@ describe("CurrentGlucoseWidget", () => {
     store.now = second + 60_000;
 
     await expect.element(tile()).toHaveTextContent(/^123/);
-    await expect.element(page.getByTestId("glucose-tile-bloom")).toBeInTheDocument();
+    expect(page.getByTestId("artwork-wash").element()).toBe(firstWash);
 
     summary.current = { mills: second, status: GlucoseStatus.High };
 

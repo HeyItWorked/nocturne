@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRawSnippet } from "svelte";
 import { Clock } from "lucide";
 import { resetCapabilitiesCache, type IconArtworkSource } from "@nocturne/watercolour";
+import { releaseWatercolour, resetWatercolour } from "$lib/test-stubs/watercolour-deferral.svelte";
+import { illustrations } from "$lib/stores/illustrations.svelte";
 import EmptyState from "./EmptyState.svelte";
+
+vi.mock("$lib/watercolour-deferral.svelte", () => import("$lib/test-stubs/watercolour-deferral.svelte"));
 
 // No `lucide-hourglass-test` set is baked, so without a GPU this can only reach the plain-SVG rung.
 const unbakedIcon = { icon: Clock, name: "hourglass-test" } satisfies IconArtworkSource;
@@ -39,16 +43,24 @@ async function paintedPixels(canvas: HTMLCanvasElement): Promise<number> {
   return count;
 }
 
-function artCanvas(container: HTMLElement): HTMLCanvasElement {
-  const canvas = container.querySelector("canvas");
-  if (!canvas) throw new Error("EmptyState rendered no artwork canvas");
-  return canvas;
+/** The painting is imported on first render, so it arrives after the text. */
+async function artCanvas(container: HTMLElement): Promise<HTMLCanvasElement> {
+  return vi.waitFor(() => {
+    const canvas = container.querySelector("canvas");
+    if (!canvas) throw new Error("EmptyState rendered no artwork canvas");
+    return canvas;
+  });
 }
 
 const action = createRawSnippet(() => ({ render: () => "<button>Create a token</button>" }));
 
 describe("EmptyState", () => {
+  beforeEach(() => {
+    releaseWatercolour();
+  });
+
   afterEach(() => {
+    illustrations.current = "animated";
     vi.restoreAllMocks();
     Reflect.deleteProperty(navigator, "gpu");
     resetCapabilitiesCache();
@@ -67,6 +79,43 @@ describe("EmptyState", () => {
     await expect.element(page.getByRole("button", { name: "Create a token" })).toBeVisible();
   });
 
+  it("renders its text at once and its painting, in a slot held at size, once deferred watercolour is due", async () => {
+    resetWatercolour();
+    const { container } = render(EmptyState, { art: "key", title: "No API tokens yet" });
+
+    await expect.element(page.getByText("No API tokens yet")).toBeVisible();
+    const slot = container.querySelector<HTMLElement>("[aria-hidden='true']")!;
+    const held = slot.getBoundingClientRect();
+    expect(container.querySelector("canvas")).toBeNull();
+
+    releaseWatercolour();
+
+    const painted = (await artCanvas(container)).parentElement!.getBoundingClientRect();
+    expect([painted.width, painted.height]).toEqual([held.width, held.height]);
+  });
+
+  it("paints a still at once, without waiting for the first-interaction window", async () => {
+    resetWatercolour();
+    illustrations.current = "still";
+    const { container } = render(EmptyState, { art: "key", title: "No API tokens yet" });
+
+    expect(await artCanvas(container)).toBeInstanceOf(HTMLCanvasElement);
+  });
+
+  it.each([
+    { name: "a catalogue artwork", art: "key" as const },
+    { name: "an icon source", art: unbakedIcon },
+  ])("shows $name as its plain glyph, at the painting's size, with illustrations off", async ({ art }) => {
+    illustrations.current = "off";
+    const { container } = render(EmptyState, { art, title: "No API tokens yet" });
+
+    const glyph = page.getByTestId("empty-state-glyph");
+    await expect.element(glyph).toBeVisible();
+    const box = glyph.element().getBoundingClientRect();
+    expect([box.width, box.height]).toEqual([160, 160]);
+    expect(container.querySelector("canvas")).toBeNull();
+  });
+
   it("renders no action row without an action", async () => {
     render(EmptyState, { art: "key", title: "No API tokens yet" });
 
@@ -77,15 +126,15 @@ describe("EmptyState", () => {
   it("keeps the painting out of the accessibility tree", async () => {
     const { container } = render(EmptyState, { art: "key", title: "No API tokens yet" });
 
-    expect(artCanvas(container).parentElement?.getAttribute("aria-hidden")).toBe("true");
+    expect((await artCanvas(container)).parentElement?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("draws a smaller painting at the compact size", async () => {
     const { container } = render(EmptyState, { art: "clock", title: "No history yet", size: "compact" });
-    const compact = artCanvas(container).parentElement!.getBoundingClientRect().width;
+    const compact = (await artCanvas(container)).parentElement!.getBoundingClientRect().width;
 
     const { container: full } = render(EmptyState, { art: "clock", title: "No history yet" });
-    const standard = artCanvas(full).parentElement!.getBoundingClientRect().width;
+    const standard = (await artCanvas(full)).parentElement!.getBoundingClientRect().width;
 
     expect(compact).toBeGreaterThan(0);
     expect(compact).toBeLessThan(standard);
@@ -146,13 +195,13 @@ describe("EmptyState", () => {
         it("paints a catalogue artwork from its baked asset", async () => {
           const { container } = render(EmptyState, { art: "key", title: "No API tokens yet" });
 
-          expect(await paintedPixels(artCanvas(container))).toBeGreaterThan(0);
+          expect(await paintedPixels(await artCanvas(container))).toBeGreaterThan(0);
         });
 
         it("draws an unbaked icon source as the plain Lucide icon", async () => {
           const { container } = render(EmptyState, { art: unbakedIcon, title: "No history yet" });
 
-          expect(await paintedPixels(artCanvas(container))).toBeGreaterThan(0);
+          expect(await paintedPixels(await artCanvas(container))).toBeGreaterThan(0);
         });
       });
     }

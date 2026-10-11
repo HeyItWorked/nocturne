@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { fade } from "svelte/transition";
-  import { Artwork, prefersReducedMotion } from "@nocturne/watercolour";
+  import { prefersReducedMotion } from "@nocturne/watercolour";
+  import { deferredArtwork } from "$lib/watercolour-deferral.svelte";
   import FirstReadingEmptyStateLoader from "./FirstReadingEmptyStateLoader.svelte";
 
   interface Props {
@@ -43,6 +44,9 @@
   // The sunrise mounts as the reading lands and is released straight away, so
   // all it plays is its fade off the chart already in place beneath it.
   let arrivalShown = $state(true);
+  // Loaded while the empty state shows, so it is in hand when the reading lands; a reading that
+  // lands before deferred watercolour comes due plays no sunrise.
+  const arrivalArtwork = deferredArtwork(() => import("$lib/watercolour/artwork"), () => emptyStateShown);
   $effect(() => {
     if (firstReadingArrived) arrivalShown = false;
   });
@@ -51,14 +55,14 @@
 <div class="relative" hidden={chartHidden} aria-hidden={chartHidden}>
   {@render chart(!chartHidden)}
 
-  {#if firstReadingArrived && arrivalShown && !prefersReducedMotion()}
+  {#if firstReadingArrived && arrivalShown && arrivalArtwork.component && !prefersReducedMotion()}
     <div
       data-testid="first-reading-arrival"
       aria-hidden="true"
       class="pointer-events-none absolute inset-0 grid place-items-center rounded-xl border bg-card"
       out:fade={{ duration: ARRIVAL_FADE_MS }}
     >
-      <Artwork
+      <arrivalArtwork.component
         artwork="sunrise"
         palette="ember"
         motion="reduced"

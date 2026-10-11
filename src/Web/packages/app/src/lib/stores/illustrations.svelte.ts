@@ -43,3 +43,23 @@ class Illustrations {
 }
 
 export const illustrations = new Illustrations();
+
+/**
+ * Whether watercolour the page could do without is worth loading or booting: not with
+ * illustrations off, nor when the browser asks to save data. Reactive on the preference.
+ */
+export function watercolourWanted(): boolean {
+  if (illustrations.current === "off") return false;
+  if (typeof navigator === "undefined") return true;
+  const connection: { saveData?: boolean } | undefined = Reflect.get(navigator, "connection");
+  return !connection?.saveData;
+}
+
+/**
+ * Whether deferred watercolour may load: wanted at all, and either past the first-interaction
+ * window or a still, which draws its asset and boots no engine. Reactive on the preference.
+ */
+export function watercolourDue(windowPassed: boolean): boolean {
+  if (!watercolourWanted()) return false;
+  return windowPassed || illustrations.current === "still";
+}

@@ -53,14 +53,11 @@
 </script>
 
 <script lang="ts">
-  import type { Snippet } from "svelte";
-  import {
-    Artwork,
-    defaultPaletteFor,
-    type ArtworkId,
-    type IconArtworkSource,
-    type PaletteId,
-  } from "@nocturne/watercolour";
+  import { onMount, type Snippet } from "svelte";
+  import type { ArtworkId, IconArtworkSource, PaletteId } from "@nocturne/watercolour";
+  import { deferredArtwork } from "$lib/watercolour-deferral.svelte";
+  import { watercolourWanted } from "$lib/stores/illustrations.svelte";
+  import EmptyStatePlainIcon, { hasPlainGlyph } from "./EmptyStatePlainIcon.svelte";
   import * as Card from "$lib/components/ui/card";
   import { cn } from "$lib/utils";
 
@@ -69,6 +66,8 @@
      * A catalogue artwork id, or a Lucide icon source from `$lib/watercolour-icons`.
      * Without a GPU a catalogue artwork plays its baked reveal (its final frame under
      * reduced motion); an icon source draws its baked final, else the plain Lucide icon.
+     * With illustrations off or the browser saving data, either shows the Lucide glyph it
+     * stands for (see `EmptyStatePlainIcon`), and art with none shows nothing.
      */
     art: ArtworkId | IconArtworkSource;
     /** Defaults to the palette the artwork is baked in, so the fallback matches the live paint. */
@@ -108,11 +107,15 @@
     "data-testid": testId,
   }: Props = $props();
 
-  const icon = $derived(typeof art === "string" ? undefined : art);
-  const artwork = $derived(typeof art === "string" ? art : undefined);
-  const resolvedPalette = $derived(
-    palette ?? defaultPaletteFor(typeof art === "string" ? art : `lucide-${art.name}`)
-  );
+  // Most cards that can be empty are not, so their pages never load the watercolour, and a
+  // painting boots the engine as it mounts. The art slot keeps its size until it arrives.
+  const painting = deferredArtwork(() => import("./EmptyStateArtwork.svelte"));
+  // After hydration: the server renders the held slot whatever the device's preference.
+  let hydrated = $state(false);
+  onMount(() => {
+    hydrated = true;
+  });
+  const glyphOnly = $derived(hydrated && !watercolourWanted());
   const inCard = $derived(variant === "card" || variant === "dashed");
   const styles = $derived(
     emptyStateVariants({
@@ -125,14 +128,15 @@
 
 {#snippet content()}
   <div class={cn(styles.root(), !inCard && className)} data-testid={inCard ? undefined : testId}>
-    <Artwork
-      {artwork}
-      {icon}
-      palette={resolvedPalette}
-      motion="auto"
-      autoplay="once"
-      class={styles.art()}
-    />
+    {#if glyphOnly}
+      {#if hasPlainGlyph(art)}
+        <EmptyStatePlainIcon {art} class={styles.art()} />
+      {/if}
+    {:else if painting.component}
+      <painting.component {art} {palette} class={styles.art()} />
+    {:else}
+      <div class={styles.art()} aria-hidden="true"></div>
+    {/if}
     <svelte:element this={headingLevel ? `h${headingLevel}` : "p"} class={styles.title()}>
       {title}
     </svelte:element>
