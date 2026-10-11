@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using OpenApi.Remote.Attributes;
 using Nocturne.API.Authorization;
+using Nocturne.API.Controllers.V4.Identity;
 using Nocturne.API.Extensions;
 using Nocturne.API.Multitenancy;
 using Nocturne.API.Services.Auth;
@@ -668,6 +669,7 @@ public class OidcController : ControllerBase
                 IsPlatformAdmin = authContext.IsPlatformAdmin,
                 IsPlatformAccessGrant = authContext.AuthType == AuthType.PlatformAccess,
                 AvatarUrl = userInfo?.AvatarUrl,
+                Grant = await MyPermissionsController.TryBuildAsync(HttpContext),
             }
         );
     }
@@ -864,6 +866,12 @@ public class SessionInfo
     /// URL to the subject's avatar image
     /// </summary>
     public string? AvatarUrl { get; set; }
+
+    /// <summary>
+    /// The caller's grant on the resolved tenant, as <c>GET /api/v4/me/permissions</c> answers it;
+    /// null where that endpoint would refuse the caller.
+    /// </summary>
+    public MyPermissionsResponse? Grant { get; set; }
 }
 
 /// <summary>
